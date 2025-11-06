@@ -12,7 +12,7 @@
 #include <arpa/inet.h>
 #include <termios.h>
 
-#define PORT 12345
+#define PORT 3000
 #define BUFSIZE 1024
 
 static ssize_t recv_line(int sock, char *buf, size_t bufsize) {
