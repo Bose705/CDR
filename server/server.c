@@ -11,111 +11,12 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <ctype.h>
-#include "Process/process.h"
+#include "Header/process.h"
+#include "Header/auth.h"
 
 #define PORT 12345
 #define BACKLOG 5
 #define BUFSIZE 1024
-#define EMAIL_MAX 64
-#define PASS_MAX 32
-#define USER_FILE "data/user.txt"
-
-// Simple XOR encryption/decryption key
-const char encryption_key[] = "SECRETKEY123";
-
-// Function to encrypt/decrypt string using XOR
-void encrypt_decrypt(char *data) {
-    int key_len = strlen(encryption_key);
-    int data_len = strlen(data);
-    for(int i = 0; i < data_len; i++) {
-        data[i] = data[i] ^ encryption_key[i % key_len];
-    }
-}
-
-// Function to validate email format
-int is_valid_email(const char *email) {
-    int at_count = 0;
-    int dot_after_at = 0;
-    int len = strlen(email);
-    
-    if(len >= EMAIL_MAX || len < 5) return 0;
-    
-    for(int i = 0; i < len; i++) {
-        if(email[i] == '@') {
-            at_count++;
-            continue;
-        }
-        if(at_count == 1 && email[i] == '.') {
-            dot_after_at = 1;
-        }
-    }
-    
-    return (at_count == 1 && dot_after_at == 1);
-}
-
-// Function to validate password
-int is_valid_password(const char *password) {
-    int len = strlen(password);
-    return (len >= 6 && len < PASS_MAX);
-}
-
-// Function to save user credentials
-int save_user(const char *email, const char *password) {
-    FILE *file = fopen(USER_FILE, "a");
-    if(!file) return 0;
-    
-    // Create encrypted copies
-    char enc_email[EMAIL_MAX];
-    char enc_pass[PASS_MAX];
-    strncpy(enc_email, email, EMAIL_MAX-1);
-    strncpy(enc_pass, password, PASS_MAX-1);
-    enc_email[EMAIL_MAX-1] = '\0';
-    enc_pass[PASS_MAX-1] = '\0';
-    
-    encrypt_decrypt(enc_email);
-    encrypt_decrypt(enc_pass);
-    
-    fprintf(file, "%s|%s\n", enc_email, enc_pass);
-    fclose(file);
-    return 1;
-}
-
-// Verify user credentials by reading the USER_FILE, decrypting entries,
-// and comparing with provided email and password.
-int verify_user(const char *email, const char *password) {
-    FILE *file = fopen(USER_FILE, "r");
-    if (!file) return 0;
-
-    char line[BUFSIZE];
-    while (fgets(line, sizeof(line), file)) {
-        // remove trailing newline
-        char *nl = strchr(line, '\n');
-        if (nl) *nl = '\0';
-
-        // split at '|'
-        char *sep = strchr(line, '|');
-        if (!sep) continue;
-        *sep = '\0';
-        char enc_email[EMAIL_MAX];
-        char enc_pass[PASS_MAX];
-        strncpy(enc_email, line, EMAIL_MAX - 1);
-        enc_email[EMAIL_MAX - 1] = '\0';
-        strncpy(enc_pass, sep + 1, PASS_MAX - 1);
-        enc_pass[PASS_MAX - 1] = '\0';
-
-        // decrypt in-place
-        encrypt_decrypt(enc_email);
-        encrypt_decrypt(enc_pass);
-
-        if (strcmp(enc_email, email) == 0 && strcmp(enc_pass, password) == 0) {
-            fclose(file);
-            return 1;
-        }
-    }
-
-    fclose(file);
-    return 0;
-}
 
 static int sendall(int sock, const char *buf, size_t len) {
     size_t total = 0;
@@ -177,18 +78,21 @@ void handle_client(int client_fd) {
                 email[EMAIL_MAX-1] = '\0';
                 
                 // Request password
-                send_line(client_fd, "Enter password (minimum 6 characters):");
+                send_line(client_fd, "Enter password (min 6 chars, must include: uppercase, lowercase, digit, special char):");
                 if (recv_line(client_fd, buf, sizeof(buf)) <= 0) break;
                 
-                // Validate password
+                // Validate password (strong validation from auth module)
                 if (!is_valid_password(buf)) {
-                    send_line(client_fd, "Invalid password. Must be at least 6 characters. Returning to main menu.");
+                    send_line(client_fd, "Invalid password. Must be at least 6 characters with uppercase, lowercase, digit, and special character. Returning to main menu.");
                     continue;
                 }
                 
-                // Save user
-                if (save_user(email, buf)) {
+                // Save user (auth module checks for duplicates)
+                int result = save_user(email, buf);
+                if (result == 1) {
                     send_line(client_fd, "Signup successful! Please login.");
+                } else if (result == -1) {
+                    send_line(client_fd, "Email already registered. Please login or use a different email.");
                 } else {
                     send_line(client_fd, "Error creating account. Please try again.");
                 }

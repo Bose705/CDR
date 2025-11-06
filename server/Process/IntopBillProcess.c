@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
-#include "IntopBillProcess.h"
+#include "../Header/IntopBillProcess.h"
 
 void* intopbillprocess(void *arg) {
     (void)arg;

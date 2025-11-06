@@ -10,9 +10,9 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 
-#include "process.h"
-#include "CustBillProcess.h"
-#include "IntopBillProcess.h"
+#include "../Header/process.h"
+#include "../Header/CustBillProcess.h"
+#include "../Header/IntopBillProcess.h"
 
 #define BUFSIZE 1024
 
