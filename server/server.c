@@ -11,6 +11,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <ctype.h>
+#include "Process/process.h"
 
 #define PORT 12345
 #define BACKLOG 5
@@ -230,7 +231,9 @@ void handle_client(int client_fd) {
             send_line(client_fd, "Enter choice (1-3):");
             if (recv_line(client_fd, buf, sizeof(buf)) <= 0) break;
             if (strcmp(buf, "1") == 0) {
-                send_line(client_fd, "Feature is coming soon");
+                // Process the CDR data: run two worker functions concurrently
+                // processCDRdata will send progress/completion messages to client
+                processCDRdata(client_fd);
                 // remain in SECOND menu
             } else if (strcmp(buf, "2") == 0) {
                 state = BILLING;
