@@ -35,30 +35,44 @@ static int send_line_fd(int sock, const char *s) {
 }
 
 // Public API: run two processing functions in parallel and notify client when done
-int processCDRdata(int client_fd) {
+int processCDRdata(int client_fd, const char *output_dir) {
     pthread_t t1, t2;
     int rc;
+    
+    // Allocate thread arguments
+    ProcessThreadArg *arg = (ProcessThreadArg *)malloc(sizeof(ProcessThreadArg));
+    if (!arg) {
+        send_line_fd(client_fd, "Error: memory allocation failed");
+        return 0;
+    }
+    strncpy(arg->output_dir, output_dir, sizeof(arg->output_dir) - 1);
+    arg->output_dir[sizeof(arg->output_dir) - 1] = '\0';
 
     // Inform client that processing has started
     send_line_fd(client_fd, "Processing CDR data: started...");
 
-    rc = pthread_create(&t1, NULL, custbillprocess, NULL);
+    rc = pthread_create(&t1, NULL, custbillprocess, arg);
     if (rc != 0) {
         send_line_fd(client_fd, "Error: failed to start Customer Billing processing thread");
+        free(arg);
         return 0;
     }
 
-    rc = pthread_create(&t2, NULL, intopbillprocess, NULL);
+    rc = pthread_create(&t2, NULL, intopbillprocess, arg);
     if (rc != 0) {
         send_line_fd(client_fd, "Error: failed to start Interoperator Billing processing thread");
         // join thread 1 if needed
         pthread_join(t1, NULL);
+        free(arg);
         return 0;
     }
 
     // Optionally, while waiting, we could stream progress updates. For now just join.
     pthread_join(t1, NULL);
     pthread_join(t2, NULL);
+    
+    // Free allocated argument
+    free(arg);
 
     // Both parts done
     send_line_fd(client_fd, "Processing CDR data: completed.");

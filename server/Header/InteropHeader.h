@@ -47,15 +47,14 @@ typedef struct OpNode
    ============================================================ */
 
 /**
- * @brief Processes a CDR file and generates statistics
- * @param filename Path to the input CDR file
- * @param output_filename Path to the output statistics file
+ * @brief Processes a CDR file and generates interoperator billing statistics
+ * @param input_path Path to the input CDR file
+ * @param output_path Path to the output statistics file
  */
-void InteroperatorBillingFile(const char *filename, const char *output_filename);
+void InteroperatorBillingProcess(const char *input_path, const char *output_path);
 
-void search_operator(const char *filename, const char *operator);
-
-void display_file(const char *filename);
+void search_operator(int client_fd, const char *filename, const char *operator_name);
+void display_interoperator_billing_file(int client_fd, const char *filename);
 
 /**
  * @brief Processes a single line from the CDR file

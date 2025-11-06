@@ -8,15 +8,28 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <ctype.h>
+#include <pthread.h>
 #include "Header/process.h"
 #include "Header/auth.h"
+#include "Header/CustBillProcess.h"
+#include "Header/IntopBillProcess.h"
 
 #define PORT 12345
 #define BACKLOG 5
 #define BUFSIZE 1024
+
+// Structure to pass client info to thread
+typedef struct {
+    int client_fd;
+    struct sockaddr_in client_addr;
+} ClientInfo;
+
+// Forward declaration
+void handle_client(int client_fd);
 
 static int sendall(int sock, const char *buf, size_t len) {
     size_t total = 0;
@@ -50,10 +63,30 @@ static ssize_t recv_line(int sock, char *buf, size_t bufsize) {
     return (ssize_t)idx;
 }
 
+// Thread wrapper function for handling clients
+void* client_thread(void* arg) {
+    ClientInfo *info = (ClientInfo *)arg;
+    int client_fd = info->client_fd;
+    
+    printf("Thread started for client %s\n", inet_ntoa(info->client_addr.sin_addr));
+    
+    // Free the allocated ClientInfo structure
+    free(info);
+    
+    // Handle the client
+    handle_client(client_fd);
+    
+    printf("Thread ending, client disconnected\n");
+    
+    return NULL;
+}
+
 void handle_client(int client_fd) {
     char buf[BUFSIZE];
     enum {MAIN, SECOND, BILLING, CUST_BILL, INTER_BILL} state = MAIN;
     int connected = 1;
+    char logged_in_user[EMAIL_MAX] = {0}; // Track logged-in user email
+    char user_output_dir[256] = {0}; // User-specific output directory
 
     while (connected) {
         if (state == MAIN) {
@@ -116,6 +149,25 @@ void handle_client(int client_fd) {
 
                 // Verify credentials
                 if (verify_user(email, buf)) {
+                    // Store logged-in user email
+                    strncpy(logged_in_user, email, EMAIL_MAX-1);
+                    logged_in_user[EMAIL_MAX-1] = '\0';
+                    
+                    // Create user-specific output directory: Output/<sanitized_email>/
+                    char sanitized[EMAIL_MAX];
+                    strncpy(sanitized, email, EMAIL_MAX-1);
+                    sanitized[EMAIL_MAX-1] = '\0';
+                    // Replace @ and . with _ for safe directory name
+                    for (int i = 0; sanitized[i]; i++) {
+                        if (sanitized[i] == '@' || sanitized[i] == '.') {
+                            sanitized[i] = '_';
+                        }
+                    }
+                    snprintf(user_output_dir, sizeof(user_output_dir), "Output/%s", sanitized);
+                    
+                    // Create the directory (mkdir returns 0 on success, -1 if exists or error)
+                    mkdir(user_output_dir, 0755);
+                    
                     send_line(client_fd, "Login successful. Welcome!");
                     state = SECOND;
                 } else {
@@ -137,7 +189,7 @@ void handle_client(int client_fd) {
             if (strcmp(buf, "1") == 0) {
                 // Process the CDR data: run two worker functions concurrently
                 // processCDRdata will send progress/completion messages to client
-                processCDRdata(client_fd);
+                processCDRdata(client_fd, user_output_dir);
                 // remain in SECOND menu
             } else if (strcmp(buf, "2") == 0) {
                 state = BILLING;
@@ -169,9 +221,31 @@ void handle_client(int client_fd) {
             send_line(client_fd, "3) Back");
             send_line(client_fd, "Enter choice (1-3):");
             if (recv_line(client_fd, buf, sizeof(buf)) <= 0) break;
-            if (strcmp(buf, "1") == 0 || strcmp(buf, "2") == 0) {
-                send_line(client_fd, "Feature is coming soon. Closing connection.");
-                break; // close connection per spec
+            if (strcmp(buf, "1") == 0) {
+                // Search by MSISDN
+                send_line(client_fd, "Enter MSISDN to search:");
+                if (recv_line(client_fd, buf, sizeof(buf)) <= 0) break;
+                
+                long msisdn = atol(buf);
+                if (msisdn <= 0) {
+                    send_line(client_fd, "Invalid MSISDN. Please enter a valid number.");
+                } else {
+                    // Use user-specific CB.txt file
+                    char cb_path[300];
+                    snprintf(cb_path, sizeof(cb_path), "%s/CB.txt", user_output_dir);
+                    search_msisdn(client_fd, cb_path, msisdn);
+                }
+                // After search, disconnect client as per requirement
+                send_line(client_fd, "Operation completed. Disconnecting...");
+                connected = 0; // disconnect client, server continues
+            } else if (strcmp(buf, "2") == 0) {
+                // Display CB.txt content
+                char cb_path[300];
+                snprintf(cb_path, sizeof(cb_path), "%s/CB.txt", user_output_dir);
+                display_customer_billing_file(client_fd, cb_path);
+                // After displaying, disconnect client as per requirement
+                send_line(client_fd, "Operation completed. Disconnecting...");
+                connected = 0; // disconnect client, server continues
             } else if (strcmp(buf, "3") == 0) {
                 state = BILLING;
             } else {
@@ -184,9 +258,30 @@ void handle_client(int client_fd) {
             send_line(client_fd, "3) Back");
             send_line(client_fd, "Enter choice (1-3):");
             if (recv_line(client_fd, buf, sizeof(buf)) <= 0) break;
-            if (strcmp(buf, "1") == 0 || strcmp(buf, "2") == 0) {
-                send_line(client_fd, "Feature is coming soon. Closing connection.");
-                break;
+            if (strcmp(buf, "1") == 0) {
+                // Search by operator name
+                send_line(client_fd, "Enter operator name to search:");
+                if (recv_line(client_fd, buf, sizeof(buf)) <= 0) break;
+                
+                if (strlen(buf) == 0) {
+                    send_line(client_fd, "Invalid operator name. Please enter a valid name.");
+                } else {
+                    // Use user-specific IOSB.txt file
+                    char iosb_path[300];
+                    snprintf(iosb_path, sizeof(iosb_path), "%s/IOSB.txt", user_output_dir);
+                    search_operator(client_fd, iosb_path, buf);
+                }
+                // After search, disconnect client as per requirement
+                send_line(client_fd, "Operation completed. Disconnecting...");
+                connected = 0; // disconnect client, server continues
+            } else if (strcmp(buf, "2") == 0) {
+                // Display IOSB.txt content
+                char iosb_path[300];
+                snprintf(iosb_path, sizeof(iosb_path), "%s/IOSB.txt", user_output_dir);
+                display_interoperator_billing_file(client_fd, iosb_path);
+                // After displaying, disconnect client as per requirement
+                send_line(client_fd, "Operation completed. Disconnecting...");
+                connected = 0; // disconnect client, server continues
             } else if (strcmp(buf, "3") == 0) {
                 state = BILLING;
             } else {
@@ -237,9 +332,30 @@ int main(void) {
             continue;
         }
         printf("Connection from %s\n", inet_ntoa(client_addr.sin_addr));
-        handle_client(client_fd);
-        printf("Client disconnected\n");
-        // continue to accept new clients
+        
+        // Allocate memory for client info
+        ClientInfo *info = (ClientInfo *)malloc(sizeof(ClientInfo));
+        if (!info) {
+            fprintf(stderr, "Failed to allocate memory for client info\n");
+            close(client_fd);
+            continue;
+        }
+        info->client_fd = client_fd;
+        info->client_addr = client_addr;
+        
+        // Create a new thread for this client
+        pthread_t thread_id;
+        if (pthread_create(&thread_id, NULL, client_thread, info) != 0) {
+            fprintf(stderr, "Failed to create thread for client\n");
+            free(info);
+            close(client_fd);
+            continue;
+        }
+        
+        // Detach the thread so it cleans up automatically when done
+        pthread_detach(thread_id);
+        
+        // Continue accepting new clients immediately
     }
 
     close(sockfd);

@@ -184,10 +184,14 @@ static void cleanupHashTable() {
 
 // Main thread function - processes CDR and generates customer billing
 void* custbillprocess(void *arg) {
-    (void)arg;
+    ProcessThreadArg *threadArg = (ProcessThreadArg *)arg;
     
     const char *inputPath = "data/data.cdr";
-    const char *outputPath = "Output/CB.txt";
+    char outputPath[300];
+    
+    // Use user-specific output directory
+    snprintf(outputPath, sizeof(outputPath), "%s/CB.txt", 
+             threadArg ? threadArg->output_dir : "Output");
     
     // Initialize hash table
     for (int i = 0; i < HASH_SIZE; i++)
